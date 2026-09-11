@@ -365,7 +365,11 @@ def export_progress_sav(base_maps, overlay_maps, name_to_hash):
         pos += 8
 
         base_map = base_maps.get(type_name, {})
+        if isinstance(base_map, list):
+            base_map = {}  # an empty "TypeName": { } block parses as [] -- treat as no fields
         overlay_map = overlay_maps.get(type_name, {})
+        if isinstance(overlay_map, list):
+            overlay_map = {}
 
         for key, base_value in base_map.items():
             h = _hash_for(key, name_to_hash)
