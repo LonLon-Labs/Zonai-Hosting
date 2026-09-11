@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Rooms{% endblock %} · Zonai Hosting</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='sounds.js') }}"></script>
+</head>
+<body data-play-sound="{{ sound|default('') }}">
+  <header class="site-header">
+    <a class="wordmark" href="{{ url_for('index') }}">Zonai Hosting</a>
+    <p class="tagline">Temporary Tears of the Kingdom Online rooms for playing with your friends the easy way.</p>
+    <button type="button" id="sound-toggle" class="secondary sound-toggle" aria-pressed="true">🔊 Sounds: On</button>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Your rooms{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>Open a room</h2>
+  <form method="post" action="{{ url_for('create_room') }}">
+    <div class="field">
+      <label for="hours">Open for how long? (up to {{ max_hours }} hours)</label>
+      <input type="number" id="hours" name="hours" min="0.25" max="{{ max_hours }}" step="0.25" value="4" required>
+    </div>
+    <button type="submit">Open room</button>
+  </form>
+  <p class="meta" style="margin-top:0.9rem;">Up to {{ max_rooms }} rooms per network. A random port between 10000 and 12000 is assigned when it opens.</p>
+</section>
+
+<section class="panel">
+  <h2>Your rooms</h2>
+  {% if rooms %}
+    <ul class="room-list">
+      {% for room in rooms %}
+        <li class="room-row">
+          <div>
+            <span class="status-dot {{ room['status'] }}"></span>
+            <strong>totk-server-{{ room['id'] }}</strong>
+            <div class="meta">
+              {% if room['status'] == 'running' %}
+                {{ public_host }}:{{ room['port'] }} · expires {{ room['expires_at'] }} UTC
+              {% else %}
+                stopped
+              {% endif %}
+            </div>
+          </div>
+          <a class="btn secondary" href="{{ url_for('room_detail', room_id=room['id']) }}">Manage →</a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty-state">No rooms yet. Open one above to get a server and port.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

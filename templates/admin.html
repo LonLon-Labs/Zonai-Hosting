@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+
+<form method="post" action="{{ url_for('admin_logout') }}" style="text-align:right; margin-bottom:0.5rem;">
+  <button type="submit" class="secondary">Log out</button>
+</form>
+
+<section class="panel">
+  <h2>Connect address</h2>
+  <p class="meta">The host shown to everyone as "Connect at" for their room.</p>
+  <form method="post" action="{{ url_for('admin_settings') }}" style="display:flex; gap:0.6rem;">
+    <input type="text" name="public_host" value="{{ public_host }}" placeholder="e.g. 203.0.113.10 or play.example.com">
+    <button type="submit">Save</button>
+  </form>
+</section>
+
+<div class="stat-strip">
+  <div class="stat">
+    <div class="value">{{ total_rooms }}</div>
+    <div class="label">rooms ever created</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ active_rooms|length }}</div>
+    <div class="label">running right now</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ by_ip|length }}</div>
+    <div class="label">distinct networks</div>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>All rooms</h2>
+  {% if all_rooms %}
+  <table>
+    <thead><tr><th>Room</th><th>Status</th><th>Port</th><th>Expires</th><th>Creator IP</th><th></th></tr></thead>
+    <tbody>
+      {% for r in all_rooms %}
+      <tr>
+        <td>totk-server-{{ r['id'] }}</td>
+        <td><span class="status-dot {{ r['status'] }}"></span>{{ r['status'] }}</td>
+        <td>{{ r['port'] or '' }}</td>
+        <td>{{ r['expires_at'] or '' }}</td>
+        <td>{{ r['creator_ip'] }}</td>
+        <td>
+          {% if r['status'] != 'deleted' %}
+          <div class="action-row" style="margin-top:0;">
+            {% if r['status'] == 'running' %}
+              <form method="post" action="{{ url_for('admin_restart_room', room_id=r['id']) }}"><button type="submit" class="secondary">Restart</button></form>
+              <form method="post" action="{{ url_for('admin_stop_room', room_id=r['id']) }}"><button type="submit" class="secondary">Stop</button></form>
+            {% else %}
+              <form method="post" action="{{ url_for('admin_start_room', room_id=r['id']) }}"><button type="submit" class="secondary">Start</button></form>
+            {% endif %}
+            <form method="post" action="{{ url_for('admin_delete_room', room_id=r['id']) }}" onsubmit="return confirm('Delete this room?');"><button type="submit" class="danger">Delete</button></form>
+            <a class="btn secondary" href="{{ url_for('room_detail', room_id=r['id']) }}">Manage</a>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No rooms yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Rooms per network</h2>
+  <table>
+    <thead><tr><th>IP</th><th>Rooms</th></tr></thead>
+    <tbody>
+      {% for row in by_ip %}
+      <tr><td>{{ row['creator_ip'] }}</td><td>{{ row['c'] }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recent activity</h2>
+  <table>
+    <thead><tr><th>When</th><th>Room</th><th>Event</th><th>IP</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for e in recent_events %}
+      <tr>
+        <td>{{ e['created_at'] }}</td>
+        <td>{{ e['room_id'] }}</td>
+        <td>{{ e['event_type'] }}</td>
+        <td>{{ e['ip'] or '' }}</td>
+        <td>{{ e['detail'] or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

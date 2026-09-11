@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}totk-server-{{ room['id'] }}{% endblock %}
+{% block content %}
+
+<p><a href="{{ url_for('index') }}">← All rooms</a></p>
+
+<section class="panel">
+  <h2>totk-server-{{ room['id'] }}</h2>
+  <p>
+    <span class="status-dot {{ room['status'] }}"></span>
+    {% if room['status'] == 'running' %}
+      {% if room['expires_at'] %}
+        Connect at <strong>{{ public_host }}:{{ room['port'] }}</strong> · expires {{ room['expires_at'] }} UTC
+      {% else %}
+        Connect at <strong>{{ public_host }}:{{ room['port'] }}</strong> · no expiry (indefinite)
+      {% endif %}
+    {% else %}
+      Stopped
+    {% endif %}
+  </p>
+
+  <div class="action-row">
+    {% if room['status'] == 'running' %}
+      <form method="post" action="{{ url_for('restart_room', room_id=room['id']) }}">
+        <button type="submit" class="secondary">Restart</button>
+      </form>
+      {% if is_admin %}
+        <form method="post" action="{{ url_for('admin_recreate_room', room_id=room['id']) }}" onsubmit="return confirm('Pull the latest image and recreate this container? This will disconnect any connected players.');">
+          <button type="submit" class="secondary">Recreate (pull latest image)</button>
+        </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('stop_room', room_id=room['id']) }}">
+        <button type="submit" class="secondary">Stop</button>
+      </form>
+      {% if can_extend %}
+        <form method="post" action="{{ url_for('extend_room', room_id=room['id']) }}" style="display:flex; gap:0.5rem; align-items:center;">
+          {% if is_admin %}
+            <input type="number" name="hours" min="0.25" step="0.25" value="{{ max_extend_hours }}" style="width:5rem;">
+          {% else %}
+            <input type="number" name="hours" min="0.25" max="{{ max_extend_hours }}" step="0.25" value="{{ max_extend_hours }}" style="width:5rem;">
+          {% endif %}
+          <button type="submit">Extend</button>
+        </form>
+      {% endif %}
+    {% else %}
+      <form method="post" action="{{ url_for('start_room', room_id=room['id']) }}" style="display:flex; gap:0.5rem; align-items:center;">
+        {% if is_admin %}
+          <input type="number" name="hours" min="0" step="0.25" value="{{ room['duration_hours'] or 4 }}" style="width:5rem;">
+          <span class="meta">0 = indefinite</span>
+        {% else %}
+          <input type="number" name="hours" min="0.25" max="{{ max_hours }}" step="0.25" value="{{ room['duration_hours'] or 4 }}" style="width:5rem;">
+        {% endif %}
+        <button type="submit">Start</button>
+      </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('delete_room', room_id=room['id']) }}" onsubmit="return confirm('Delete this room and its save data? This can\'t be undone.');">
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Custom save</h2>
+  <p class="meta">Stop the room first. Uploading replaces the current save with your .sav file.</p>
+  <form method="post" action="{{ url_for('upload_save', room_id=room['id']) }}" enctype="multipart/form-data">
+    <div class="field">
+      <input type="file" name="save_file" accept=".sav" required>
+    </div>
+    <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>Upload save</button>
+  </form>
+  <div style="margin-top:0.75rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+    <form method="get" action="{{ url_for('download_main_save', room_id=room['id']) }}" class="download-save-form" style="display:flex; gap:0.5rem; align-items:center;">
+      <label class="meta" style="margin:0;">Download current server save as</label>
+      <select name="format">
+        <option value="ktml">.ktml</option>
+        <option value="sav">.sav</option>
+      </select>
+      <button type="submit" class="secondary">Download</button>
+    </form>
+  </div>
+  <p class="meta" style="margin-top:0.35rem;">.sav conversion matches the real game server's own save format exactly (ported directly from its save-conversion code), not a third-party approximation.</p>
+</section>
+
+<section class="panel">
+  <h2>Mods (Romfs)</h2>
+  <p class="meta">Stop the room first. Upload a .zip of your Romfs mod files &mdash; matching files are overwritten, new files are added, and anything else already there is left alone. Zip either your Romfs folder itself, or just its contents (Pack/, System/, etc. at the top level).</p>
+  <form method="post" action="{{ url_for('upload_romfs', room_id=room['id']) }}" enctype="multipart/form-data">
+    <div class="field">
+      <input type="file" name="romfs_file" accept=".zip" required>
+    </div>
+    <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>Upload mods</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>PVP</h2>
+  <p class="meta">Stop the room first. Controls whether other players' puppets can collide with and hit you.</p>
+  <p><span class="status-dot {{ 'running' if room['pvp_enabled'] else 'stopped' }}"></span> PVP is currently <strong>{{ 'on' if room['pvp_enabled'] else 'off' }}</strong></p>
+  <form method="post" action="{{ url_for('set_pvp', room_id=room['id']) }}">
+    <input type="hidden" name="enabled" value="{{ '0' if room['pvp_enabled'] else '1' }}">
+    <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>
+      {{ 'Disable PVP' if room['pvp_enabled'] else 'Enable PVP' }}
+    </button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Upload speed</h2>
+  <p class="meta">Stop the room first. Caps how fast players can upload data (mods, saves, etc.) to the server, in bytes/second. Default is 10,000,000 (10&nbsp;MB/s) &mdash; if someone is having trouble connecting, try lowering this.</p>
+  <p>Currently <strong>{{ '{:,}'.format(room['max_upload_per_second'] or 10000000) }}</strong> bytes/second</p>
+  <form method="post" action="{{ url_for('set_max_upload', room_id=room['id']) }}" style="display:flex; gap:0.5rem; align-items:center;">
+    <input type="number" name="max_upload_per_second" min="50000" max="100000000" step="1" value="{{ room['max_upload_per_second'] or 10000000 }}" style="width:10rem;" {% if room['status'] == 'running' %}disabled{% endif %}>
+    <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>Save</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Players</h2>
+  {% if players %}
+  <table>
+    <thead><tr><th></th><th>Name</th><th>Last seen</th><th></th></tr></thead>
+    <tbody>
+      {% for p in players %}
+      <tr>
+        <td><span class="status-dot {{ 'running' if p['online'] else 'stopped' }}"></span></td>
+        <td>{{ p['nickname'] }}</td>
+        <td class="meta">{{ p['last_seen'] }} UTC</td>
+        <td>
+          <div class="action-row" style="margin-top:0;">
+            <form method="get" action="{{ url_for('download_player_save', room_id=room['id'], uid=p['uid']) }}" class="download-save-form" style="display:inline-flex; gap:0.25rem; align-items:center;">
+              <select name="format">
+                <option value="ktml">.ktml</option>
+                <option value="sav">.sav</option>
+              </select>
+              <button type="submit" class="secondary">Download</button>
+            </form>
+            {% if p['online'] %}
+              <form method="post" action="{{ url_for('kick_player_route', room_id=room['id'], uid=p['uid']) }}"><button type="submit" class="secondary">Kick</button></form>
+              <form method="post" action="{{ url_for('ban_player_route', room_id=room['id'], uid=p['uid']) }}" onsubmit="return confirm('Ban ' + '{{ p['nickname'] }}' + '?');"><button type="submit" class="danger">Ban</button></form>
+            {% endif %}
+            {% if room['status'] != 'running' %}
+              <form method="post" action="{{ url_for('upload_player_save', room_id=room['id'], uid=p['uid']) }}" enctype="multipart/form-data" style="display:inline-flex; gap:0.25rem; align-items:center;">
+                <input type="file" name="save_file" accept=".ktml,.sav" required style="max-width:9rem;">
+                <button type="submit" class="secondary">Upload save</button>
+              </form>
+              <form method="post" action="{{ url_for('delete_player_save_route', room_id=room['id'], uid=p['uid']) }}" onsubmit="return confirm('Delete this player\'s save data?');"><button type="submit" class="danger">Delete save</button></form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">Nobody has connected to this room yet.</p>
+  {% endif %}
+</section>
+
+{% if room['status'] == 'running' %}
+<section class="panel">
+  <h2>Console</h2>
+  <div class="field">
+    <input type="text" id="command-input" placeholder="e.g. list">
+  </div>
+  <button type="button" id="command-send">Send</button>
+  <pre class="console" id="console-output" style="margin-top:1rem;">{{ logs }}</pre>
+</section>
+<script>
+  const input = document.getElementById('command-input');
+  const output = document.getElementById('console-output');
+  const send = document.getElementById('command-send');
+  let userScrolledUp = false;
+
+  output.addEventListener('scroll', () => {
+    userScrolledUp = output.scrollTop + output.clientHeight < output.scrollHeight - 10;
+  });
+
+  function updateOutput(text) {
+    output.textContent = text;
+    if (!userScrolledUp) {
+      output.scrollTop = output.scrollHeight;
+    }
+  }
+
+  async function sendCommand() {
+    const command = input.value.trim();
+    if (!command) return;
+    send.disabled = true;
+    try {
+      const resp = await fetch("{{ url_for('run_command', room_id=room['id']) }}", {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: "command=" + encodeURIComponent(command),
+      });
+      const data = await resp.json();
+      if (data.logs) {
+        updateOutput(data.logs);
+      } else if (data.error) {
+        output.textContent += "\n[error] " + data.error;
+      }
+    } finally {
+      send.disabled = false;
+      input.value = "";
+    }
+  }
+
+  async function pollLogs() {
+    try {
+      const resp = await fetch("{{ url_for('room_logs', room_id=room['id']) }}");
+      const data = await resp.json();
+      if (typeof data.logs === "string") {
+        updateOutput(data.logs);
+      }
+    } catch (e) {
+      // network hiccup -- just try again next tick
+    }
+  }
+
+  send.addEventListener("click", sendCommand);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") sendCommand(); });
+
+  setInterval(pollLogs, 3000);
+</script>
+{% endif %}
+
+<script>
+  // .sav downloads run through a server-side converter ported directly
+  // from the real game server's own save-format code (not a third-party
+  // approximation). A plain form GET submission for an attachment
+  // response leaves the browser sitting on this same page (no navigation
+  // happens), so there's no page-load event left to hang a success sound
+  // off of -- fetch it instead so we can tell whether the conversion
+  // actually succeeded and cue the right sound either way. Plain .ktml
+  // downloads (no conversion involved) are left as ordinary form
+  // submissions; a missing save file for those still surfaces via a real
+  // error.html navigation, which plays its own sound from data-play-sound.
+  function initConversionDownloads() {
+    document.querySelectorAll("form.download-save-form").forEach(function (form) {
+      form.addEventListener("submit", function (evt) {
+        const select = form.querySelector('select[name="format"]');
+        const format = select ? select.value : "ktml";
+        if (format !== "sav") {
+          return; // let the browser handle the plain .ktml download natively
+        }
+        evt.preventDefault();
+        downloadSavConversion(form);
+      });
+    });
+  }
+
+  async function downloadSavConversion(form) {
+    const button = form.querySelector('button[type="submit"]');
+    const url = form.getAttribute("action") + "?format=sav";
+    clearDownloadError(form);
+    if (button) button.disabled = true;
+    try {
+      const resp = await fetch(url, { credentials: "same-origin" });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const disposition = resp.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        const filename = match ? match[1] : "save.sav";
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+        TotkSounds.play("success");
+      } else {
+        TotkSounds.play(resp.status === 404 ? "warning" : "error");
+        const html = await resp.text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const banner = doc.querySelector(".error-banner");
+        showDownloadError(form, banner ? banner.textContent.trim() : "Couldn't convert this save to .sav.");
+      }
+    } catch (e) {
+      TotkSounds.play("error");
+      showDownloadError(form, "Something went wrong requesting the download.");
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function showDownloadError(form, message) {
+    let el = form._downloadErrorEl;
+    if (!el) {
+      el = document.createElement("p");
+      el.className = "meta download-error";
+      form.insertAdjacentElement("afterend", el);
+      form._downloadErrorEl = el;
+    }
+    el.textContent = message;
+  }
+
+  function clearDownloadError(form) {
+    if (form._downloadErrorEl) {
+      form._downloadErrorEl.textContent = "";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", initConversionDownloads);
+</script>
+
+{% endblock %}
