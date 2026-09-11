@@ -392,10 +392,10 @@ def export_progress_sav(base_maps, overlay_maps, name_to_hash):
                 table_value = None
 
             if table_value is not None:
-                buf.write_at(pos, struct.pack("<i", h))
+                buf.write_at(pos, struct.pack("<I", h & 0xFFFFFFFF))
                 buf.write_at(pos + 4, struct.pack("<I", table_value & 0xFFFFFFFF))
             else:
-                buf.write_at(pos, struct.pack("<i", h))
+                buf.write_at(pos, struct.pack("<I", h & 0xFFFFFFFF))
             pos += 8
 
     if data_offset > FILE_SIZE:
