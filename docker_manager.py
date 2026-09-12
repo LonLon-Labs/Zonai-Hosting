@@ -375,6 +375,77 @@ def player_save_path(room_id, uid):
     return os.path.join(room_dir(room_id), "User", "SaveServer", "users", f"{uid}.ktml")
 
 
+# defaultClientSave.ktml is the template every player in a room gets
+# seeded from the first time the server sees them. It's per-room, not
+# global: each room gets its own persisted copy under its own data
+# directory (seeded from the image's own baked-in default via
+# docker-entrypoint.sh's first-run copy, same as serverCreator.ktml and
+# the PVP puppet packs), so room owners can customize it for their own
+# room without affecting anyone else's.
+
+def default_client_save_path(room_id):
+    return os.path.join(room_dir(room_id), "Resources", "SaveServer", "defaultClientSave.ktml")
+
+
+def _image_default_client_save_path():
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "Docker Server", "Resources", "SaveServer", "defaultClientSave.ktml"
+    )
+
+
+def fix_resources_permissions(room_id):
+    """Same reasoning as fix_save_permissions(), but for Resources/ --
+    needed before reading a room's own defaultClientSave.ktml, since
+    os.path.isfile() can silently lie about a root-owned directory it
+    can't see into (see replace_save's history for the full story)."""
+    ensure_room_dir(room_id)
+    _run_privileged(room_id, "chmod -R a+rX /data/Resources 2>/dev/null || true")
+
+
+def read_default_client_save(room_id):
+    """Return this room's own defaultClientSave.ktml. If the room hasn't
+    been started yet (so its persistent Resources/ tree was never seeded),
+    falls back to the image's own baked-in default -- what a first start
+    would seed it with anyway -- so downloading always shows something
+    real rather than a 404 for a room nobody's touched yet."""
+    fix_resources_permissions(room_id)
+    path = default_client_save_path(room_id)
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8", errors="strict") as f:
+            return f.read()
+    with open(_image_default_client_save_path(), "r", encoding="utf-8", errors="strict") as f:
+        return f.read()
+
+
+def replace_default_client_save(room_id, text):
+    """Overwrite this room's own defaultClientSave.ktml. Same
+    root-ownership situation as everything else under a room's
+    Resources/ tree (seeded there by docker-entrypoint.sh running as
+    root, or written to by the game server as root) -- write to a temp
+    file in the same directory and atomically rename it over the
+    destination, with the usual privileged-container permission-fix
+    retry if even creating that temp file fails."""
+    save_server_dir = os.path.join(room_dir(room_id), "Resources", "SaveServer")
+    os.makedirs(save_server_dir, exist_ok=True)
+    dest = os.path.join(save_server_dir, "defaultClientSave.ktml")
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=save_server_dir, prefix=".defaultClientSave-", suffix=".tmp")
+    except PermissionError:
+        _run_privileged(room_id, "chmod -R a+rwX /data/Resources 2>/dev/null || true")
+        fd, tmp_path = tempfile.mkstemp(dir=save_server_dir, prefix=".defaultClientSave-", suffix=".tmp")
+    os.close(fd)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp_path, dest)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 # Per-room PuppetPacks/ ships two variants of the PlayerPuppet actor pack
 # (the actor used to represent *other* players in your world): a 'Dummy'
 # version with no collision -- other players can't be hit or hit you -- and

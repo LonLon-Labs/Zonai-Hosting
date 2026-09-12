@@ -512,10 +512,8 @@ def upload_player_save(room_id, owner_key, uid):
         if f is None or f.filename == "":
             return render_template("error.html", message="No file selected.", sound="warning"), 400
         filename = secure_filename(f.filename)
-        is_sav = filename.lower().endswith(".sav")
-        is_ktml = filename.lower().endswith(".ktml")
-        if not (is_sav or is_ktml):
-            return render_template("error.html", message="Only .ktml or .sav files are accepted.", sound="warning"), 400
+        if not filename.lower().endswith(".ktml"):
+            return render_template("error.html", message="Only .ktml files are accepted.", sound="warning"), 400
         f.stream.seek(0, os.SEEK_END)
         size = f.stream.tell()
         f.stream.seek(0)
@@ -523,33 +521,18 @@ def upload_player_save(room_id, owner_key, uid):
             return render_template("error.html", message="Save file is too large.", sound="warning"), 400
 
         raw = f.read()
-        converted = False  # only .sav uploads actually run the sav<->ktml converter
-        if is_sav:
-            try:
-                ktml_text = save_converter.progress_sav_to_ktml(raw)
-            except save_converter.ConversionError as e:
-                return render_template("error.html", message=f"Couldn't convert this save to .ktml: {e}", sound="error"), 400
-            content_bytes = ktml_text.encode("utf-8")
-            converted = True
-        else:
-            try:
-                save_converter.parse_ktml(raw.decode("utf-8", errors="strict"))
-            except Exception as e:
-                return render_template("error.html", message=f"This doesn't look like a valid .ktml save: {e}", sound="error"), 400
-            content_bytes = raw
+        try:
+            save_converter.parse_ktml(raw.decode("utf-8", errors="strict"))
+        except Exception as e:
+            return render_template("error.html", message=f"This doesn't look like a valid .ktml save: {e}", sound="error"), 400
 
         # The file on disk is always named after the player's UID -- that's
         # how SaveServer.getClientUID()/save() looks it up server-side --
         # regardless of what the uploaded file was called.
-        docker_manager.replace_player_save(room_id, uid, content_bytes)
+        docker_manager.replace_player_save(room_id, uid, raw)
         models.log_event(conn, room_id, "player_save_uploaded", detail=f"{uid} ({filename})")
     finally:
         conn.close()
-    # A .sav upload just ran through the sav -> ktml converter -- cue the
-    # success sound the same way the .sav download side does. A plain
-    # .ktml upload didn't touch the converter, so it stays silent.
-    if converted:
-        return redirect(url_for("room_detail", room_id=room_id, sound="success"))
     return redirect(url_for("room_detail", room_id=room_id))
 
 
@@ -597,30 +580,59 @@ def download_player_save(room_id, owner_key, uid):
     if not os.path.isfile(path):
         return render_template("error.html", message="No save file exists for this player yet.", sound="warning"), 404
     safe_name = secure_filename(player["nickname"] or uid) or uid
-    if request.args.get("format") == "sav":
-        # A player's actual usable save is a merge of the server-wide save
-        # (shared/world progress) with this player's own overrides -- a
-        # standalone conversion of just their file would be missing
-        # everything that only lives in the server save. Mirrors exactly
-        # how the real server generates a specific player's progress.sav.
-        server_path = docker_manager.main_save_path(room_id)
-        if not os.path.isfile(server_path):
-            return render_template("error.html", message="No server save file exists yet to merge this player's save with.", sound="warning"), 400
-        with open(server_path, "r", encoding="utf-8", errors="strict") as f:
-            server_ktml_text = f.read()
-        with open(path, "r", encoding="utf-8", errors="strict") as f:
-            player_ktml_text = f.read()
-        try:
-            sav_bytes = save_converter.ktml_to_progress_sav(server_ktml_text, player_ktml_text)
-        except save_converter.ConversionError as e:
-            return render_template("error.html", message=f"Couldn't convert this save to .sav: {e}", sound="error"), 400
-        return send_file(
-            io.BytesIO(sav_bytes),
-            as_attachment=True,
-            download_name=f"{safe_name}.sav",
-            mimetype="application/octet-stream",
-        )
     return send_file(path, as_attachment=True, download_name=f"{safe_name}.ktml")
+
+
+@app.route("/rooms/<int:room_id>/default_client_save")
+@require_owner_key
+def download_default_client_save(room_id, owner_key):
+    conn = models.get_db()
+    try:
+        owned_room_or_403(conn, room_id, owner_key)
+    finally:
+        conn.close()
+    try:
+        text = docker_manager.read_default_client_save(room_id)
+    except OSError as e:
+        return render_template("error.html", message=f"Couldn't read defaultClientSave.ktml: {e}"), 500
+    return send_file(
+        io.BytesIO(text.encode("utf-8")),
+        as_attachment=True,
+        download_name=f"totk-server-{room_id}-defaultClientSave.ktml",
+        mimetype="text/plain",
+    )
+
+
+@app.route("/rooms/<int:room_id>/default_client_save", methods=["POST"])
+@require_owner_key
+def upload_default_client_save(room_id, owner_key):
+    conn = models.get_db()
+    try:
+        room = owned_room_or_403(conn, room_id, owner_key)
+        if room["status"] == "running":
+            return render_template("error.html", message="Stop the room before changing the default client save."), 400
+        f = request.files.get("default_client_save_file")
+        if f is None or f.filename == "":
+            return render_template("error.html", message="No file selected.", sound="warning"), 400
+        filename = secure_filename(f.filename)
+        if not filename.lower().endswith(".ktml"):
+            return render_template("error.html", message="Only .ktml files are accepted.", sound="warning"), 400
+        f.stream.seek(0, os.SEEK_END)
+        size = f.stream.tell()
+        f.stream.seek(0)
+        if size > MAX_SAVE_UPLOAD_BYTES:
+            return render_template("error.html", message="File is too large.", sound="warning"), 400
+        raw = f.read()
+        try:
+            text = raw.decode("utf-8")
+            save_converter.parse_ktml(text)  # validate it actually parses before overwriting the real file
+        except Exception as e:
+            return render_template("error.html", message=f"This doesn't look like a valid .ktml file: {e}", sound="error"), 400
+        docker_manager.replace_default_client_save(room_id, text)
+        models.log_event(conn, room_id, "default_client_save_uploaded", detail=filename)
+    finally:
+        conn.close()
+    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/rooms/<int:room_id>/pvp", methods=["POST"])

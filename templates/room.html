@@ -78,7 +78,20 @@
       <button type="submit" class="secondary">Download</button>
     </form>
   </div>
-  <p class="meta" style="margin-top:0.35rem;">.sav conversion matches the real game server's own save format exactly (ported directly from its save-conversion code), not a third-party approximation.</p>
+  <p class="meta" style="margin-top:0.35rem;">.sav conversion uses the game server's own save format exactly (ported directly from its save-conversion code), separate converter available (created by <a href="https://github.com/LegendarySavageGamer/TOTK-1.2.1-Save-Converter" target="_blank">ThyHeroOfTime</a>).</p>
+</section>
+
+<section class="panel">
+  <h2>Default client save</h2>
+  <p class="meta">Resources/SaveServer/defaultClientSave.ktml for this room -- the template every new player who joins gets seeded from. This only affects players who haven't connected to this room yet.</p>
+  <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start;">
+    <a class="btn secondary" href="{{ url_for('download_default_client_save', room_id=room['id']) }}">Download</a>
+    <form method="post" action="{{ url_for('upload_default_client_save', room_id=room['id']) }}" enctype="multipart/form-data" style="display:flex; gap:0.5rem; align-items:center;">
+      <input type="file" name="default_client_save_file" accept=".ktml" required>
+      <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>Upload &amp; replace</button>
+    </form>
+  </div>
+  <p class="meta" style="margin-top:0.35rem;">Stop the room first to upload.</p>
 </section>
 
 <section class="panel">
@@ -127,20 +140,14 @@
         <td class="meta">{{ p['last_seen'] }} UTC</td>
         <td>
           <div class="action-row" style="margin-top:0;">
-            <form method="get" action="{{ url_for('download_player_save', room_id=room['id'], uid=p['uid']) }}" class="download-save-form" style="display:inline-flex; gap:0.25rem; align-items:center;">
-              <select name="format">
-                <option value="ktml">.ktml</option>
-                <option value="sav">.sav</option>
-              </select>
-              <button type="submit" class="secondary">Download</button>
-            </form>
+            <a href="{{ url_for('download_player_save', room_id=room['id'], uid=p['uid']) }}" class="btn secondary">Download save (.ktml)</a>
             {% if p['online'] %}
               <form method="post" action="{{ url_for('kick_player_route', room_id=room['id'], uid=p['uid']) }}"><button type="submit" class="secondary">Kick</button></form>
               <form method="post" action="{{ url_for('ban_player_route', room_id=room['id'], uid=p['uid']) }}" onsubmit="return confirm('Ban ' + '{{ p['nickname'] }}' + '?');"><button type="submit" class="danger">Ban</button></form>
             {% endif %}
             {% if room['status'] != 'running' %}
               <form method="post" action="{{ url_for('upload_player_save', room_id=room['id'], uid=p['uid']) }}" enctype="multipart/form-data" style="display:inline-flex; gap:0.25rem; align-items:center;">
-                <input type="file" name="save_file" accept=".ktml,.sav" required style="max-width:9rem;">
+                <input type="file" name="save_file" accept=".ktml" required style="max-width:9rem;">
                 <button type="submit" class="secondary">Upload save</button>
               </form>
               <form method="post" action="{{ url_for('delete_player_save_route', room_id=room['id'], uid=p['uid']) }}" onsubmit="return confirm('Delete this player\'s save data?');"><button type="submit" class="danger">Delete save</button></form>
