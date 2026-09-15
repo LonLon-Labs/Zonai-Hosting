@@ -65,6 +65,7 @@ def init_db():
     conn.executescript(SCHEMA)
     _ensure_column(conn, "rooms", "pvp_enabled", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "rooms", "max_upload_per_second", "INTEGER NOT NULL DEFAULT 10000000")
+    _ensure_column(conn, "rooms", "romfs_modified", "INTEGER NOT NULL DEFAULT 0")
     if not get_setting(conn, "_pvp_default_fixed"):
         # pvp_enabled was briefly added with DEFAULT 1 (PVP "on") before
         # this was corrected to DEFAULT 0 -- the room's base/untouched
@@ -242,5 +243,13 @@ def set_max_upload_per_second(conn, room_id, value):
     conn.execute(
         "UPDATE rooms SET max_upload_per_second = ? WHERE id = ?",
         (value, room_id),
+    )
+    conn.commit()
+
+
+def set_romfs_modified(conn, room_id, modified):
+    conn.execute(
+        "UPDATE rooms SET romfs_modified = ? WHERE id = ?",
+        (1 if modified else 0, room_id),
     )
     conn.commit()

@@ -530,6 +530,28 @@ chmod -R a+rwX /data/Resources
     _run_privileged(room_id, script)
 
 
+def reset_romfs(room_id):
+    """Discard any custom Romfs mods for this room and restore the
+    original Romfs tree exactly as shipped in the image -- wipes the
+    room's entire persistent Romfs/ folder and replaces it with a fresh
+    copy of /app/seed/Romfs (the image's own baked-in default), the same
+    source used elsewhere in this file (set_pvp_enabled,
+    set_max_upload_per_second) so this doesn't depend on whatever
+    happens to already be sitting in the room's own volume.
+
+    Like everything else under a room's data directory, Romfs/ is
+    root-owned on the host (written there by the game server, or seeded
+    there by docker-entrypoint.sh, both running as root inside the
+    container) -- this process can't rm -rf or recreate it directly, so
+    it runs inside a short-lived privileged container instead, same
+    pattern as replace_romfs's own copy step."""
+    ensure_room_dir(room_id)
+    _run_privileged(
+        room_id,
+        "rm -rf /data/Romfs && cp -a /app/seed/Romfs /data/Romfs && chmod -R a+rwX /data/Romfs",
+    )
+
+
 def replace_romfs(room_id, file_storage):
     """Extract a .zip of Romfs mod files into the room's persistent Romfs
     folder (bind-mounted at /app/run/Romfs in the container). Files whose

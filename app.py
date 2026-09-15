@@ -399,7 +399,25 @@ def upload_romfs(room_id, owner_key):
             count = docker_manager.replace_romfs(room_id, f)
         except zipfile.BadZipFile:
             return render_template("error.html", message="That doesn't look like a valid .zip file."), 400
+        if count > 0:
+            models.set_romfs_modified(conn, room_id, True)
         models.log_event(conn, room_id, "romfs_uploaded", detail=f"{filename} ({count} files)")
+    finally:
+        conn.close()
+    return redirect(url_for("room_detail", room_id=room_id))
+
+
+@app.route("/rooms/<int:room_id>/reset_romfs", methods=["POST"])
+@require_owner_key
+def reset_romfs_route(room_id, owner_key):
+    conn = models.get_db()
+    try:
+        room = owned_room_or_403(conn, room_id, owner_key)
+        if room["status"] == "running":
+            return render_template("error.html", message="Stop the room before resetting mods."), 400
+        docker_manager.reset_romfs(room_id)
+        models.set_romfs_modified(conn, room_id, False)
+        models.log_event(conn, room_id, "romfs_reset")
     finally:
         conn.close()
     return redirect(url_for("room_detail", room_id=room_id))

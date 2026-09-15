@@ -103,6 +103,11 @@
     </div>
     <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>Upload mods</button>
   </form>
+  {% if room['romfs_modified'] %}
+  <form method="post" action="{{ url_for('reset_romfs_route', room_id=room['id']) }}" style="margin-top:0.75rem;" onsubmit="return confirm('Remove all custom Romfs mods and restore the original Romfs files? This can\'t be undone.');">
+    <button type="submit" class="danger" {% if room['status'] == 'running' %}disabled{% endif %}>Reset Romfs to original</button>
+  </form>
+  {% endif %}
 </section>
 
 <section class="panel">
