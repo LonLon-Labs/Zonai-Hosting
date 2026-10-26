@@ -115,19 +115,30 @@ chmod -R a+rwX /data/server.jar /data/start.bat /data/Plugins /data/PythonAPI
     _run_privileged(room_id, script, image=image_for_key(key))
 
 
+def _try_pull(image):
+    """Pull the image so a re-pushed tag reaches this host. If the pull fails
+    (offline, registry down), fall back to the cached copy rather than refuse
+    to start."""
+    try:
+        client().api.pull(image)
+    except Exception as e:
+        print(f"Warning: couldn't pull {image}; using the cached copy if there is one: {e}")
+
+
 def sync_room_image(room_id, key):
     """Make this room's program files match the requested server version.
 
-    docker-entrypoint.sh only seeds the image's server.jar when the room has
-    none, so a room that has already run needs its program files replaced
-    here when its version changes. Only the program files are touched, so
-    the room's data carries over in both directions (upgrade or downgrade)."""
-    image_for_key(key)  # validates the key
+    docker-entrypoint.sh only seeds the image's program files when the room
+    has none. The program files are therefore refreshed from the image on
+    every start, so a rebuilt image reaches existing rooms. Saves, Romfs,
+    Resources, PuppetPacks and ban lists are never touched, so the room's
+    data carries over in both directions (upgrade or downgrade)."""
+    image = image_for_key(key)
     with room_lock(room_id):
         ensure_room_dir(room_id)
+        _try_pull(image)
         has_program = os.path.isfile(os.path.join(room_dir(room_id), "server.jar"))
-        installed = _read_image_marker(room_id) or (LEGACY_IMAGE_KEY if has_program else None)
-        if has_program and installed != key:
+        if has_program:
             install_room_code(room_id, key)
         _write_image_marker(room_id, key)
 
