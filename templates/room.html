@@ -60,6 +60,20 @@
 </section>
 
 <section class="panel">
+  <h2>Server version</h2>
+  <p class="meta">Stop the room first. Switching versions keeps this room's saves, players, mods, and settings; only the server program is replaced. You can switch back and forth at any time.</p>
+  <p>Current version: <strong>{{ current_image_label }}</strong></p>
+  <form method="post" action="{{ url_for('change_image_version', room_id=room['id']) }}" style="display:flex; gap:0.5rem; align-items:center;">
+    <select name="image_version" {% if room['status'] == 'running' %}disabled{% endif %}>
+      {% for key, label in image_choices %}
+        <option value="{{ key }}" {% if key == room['image_version'] %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="secondary" {% if room['status'] == 'running' %}disabled{% endif %}>Switch version</button>
+  </form>
+</section>
+
+<section class="panel">
   <h2>Custom save</h2>
   <p class="meta">Stop the room first. Uploading replaces the current save with your .sav file.</p>
   <form method="post" action="{{ url_for('upload_save', room_id=room['id']) }}" enctype="multipart/form-data">

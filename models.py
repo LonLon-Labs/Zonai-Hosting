@@ -66,6 +66,7 @@ def init_db():
     _ensure_column(conn, "rooms", "pvp_enabled", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "rooms", "max_upload_per_second", "INTEGER NOT NULL DEFAULT 10000000")
     _ensure_column(conn, "rooms", "romfs_modified", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "rooms", "image_version", "TEXT NOT NULL DEFAULT '0.0.1-deprecated'")
     if not get_setting(conn, "_pvp_default_fixed"):
         # pvp_enabled was briefly added with DEFAULT 1 (PVP "on") before
         # this was corrected to DEFAULT 0 -- the room's base/untouched
@@ -243,6 +244,14 @@ def set_max_upload_per_second(conn, room_id, value):
     conn.execute(
         "UPDATE rooms SET max_upload_per_second = ? WHERE id = ?",
         (value, room_id),
+    )
+    conn.commit()
+
+
+def set_image_version(conn, room_id, version):
+    conn.execute(
+        "UPDATE rooms SET image_version = ? WHERE id = ?",
+        (version, room_id),
     )
     conn.commit()
 

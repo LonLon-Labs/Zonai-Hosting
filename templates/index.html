@@ -9,6 +9,14 @@
       <label for="hours">Open for how long? (up to {{ max_hours }} hours)</label>
       <input type="number" id="hours" name="hours" min="0.25" max="{{ max_hours }}" step="0.25" value="4" required>
     </div>
+    <div class="field">
+      <label for="image_version">Server version</label>
+      <select id="image_version" name="image_version">
+        {% for key, label in image_choices %}
+          <option value="{{ key }}" {% if key == default_image_key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <button type="submit">Open room</button>
   </form>
   <p class="meta" style="margin-top:0.9rem;">Up to {{ max_rooms }} rooms per network. A random port between 10000 and 12000 is assigned when it opens.</p>

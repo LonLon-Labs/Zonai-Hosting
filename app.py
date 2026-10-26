@@ -58,6 +58,11 @@ def get_owner_key():
     return key
 
 
+def image_choices():
+    """(key, label) pairs for the server-version picker, in display order."""
+    return [(k, docker_manager.IMAGE_LABELS[k]) for k in docker_manager.IMAGE_ORDER]
+
+
 def require_owner_key(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -109,6 +114,8 @@ def index():
         return render_template(
             "index.html",
             rooms=rooms,
+            image_choices=image_choices(),
+            default_image_key=docker_manager.DEFAULT_IMAGE_KEY,
             max_rooms=MAX_ROOMS_PER_IP,
             max_hours=MAX_INITIAL_HOURS,
             now=datetime.utcnow(),
@@ -128,6 +135,10 @@ def create_room():
         hours = 1
     hours = max(0.25, min(hours, MAX_INITIAL_HOURS))
 
+    image_version = request.form.get("image_version", docker_manager.DEFAULT_IMAGE_KEY)
+    if image_version not in docker_manager.IMAGE_CHOICES:
+        return render_template("error.html", message="Unknown server version."), 400
+
     conn = models.get_db()
     try:
         # Admin can bypass the 2‑room limit
@@ -137,9 +148,9 @@ def create_room():
 
         now = models.now_iso()
         cur = conn.execute(
-            "INSERT INTO rooms (owner_key, creator_ip, status, duration_hours, created_at, pvp_enabled, max_upload_per_second) "
-            "VALUES (?, ?, 'stopped', ?, ?, 0, ?)",
-            (owner_key, ip, hours, now, DEFAULT_MAX_UPLOAD_PER_SECOND),
+            "INSERT INTO rooms (owner_key, creator_ip, status, duration_hours, created_at, pvp_enabled, max_upload_per_second, image_version) "
+            "VALUES (?, ?, 'stopped', ?, ?, 0, ?, ?)",
+            (owner_key, ip, hours, now, DEFAULT_MAX_UPLOAD_PER_SECOND, image_version),
         )
         conn.commit()
         room_id = cur.lastrowid
@@ -168,6 +179,7 @@ def _start_room(conn, room_id, hours):
         room = models.get_room(conn, room_id)
         if room["status"] == "running":
             return
+        docker_manager.sync_room_image(room_id, room["image_version"])
         port = models.allocate_port(conn)
         docker_manager.create_and_start(room_id, port)
         # Explicitly (re)apply the room's stored PVP state to the container's
@@ -220,6 +232,8 @@ def room_detail(room_id, owner_key):
             logs=docker_manager.recent_logs(room_id) if room["status"] == "running" else "",
             public_host=get_public_host(conn),
             players=models.players_for_room(conn, room_id),
+            image_choices=image_choices(),
+            current_image_label=docker_manager.IMAGE_LABELS.get(room["image_version"], room["image_version"]),
         )
     finally:
         conn.close()
@@ -345,6 +359,25 @@ def extend_room(room_id, owner_key):
         )
         conn.commit()
         models.log_event(conn, room_id, "extended", detail=f"+{extra_hours}h" + (" (admin)" if is_admin else ""))
+    finally:
+        conn.close()
+    return redirect(url_for("room_detail", room_id=room_id))
+
+
+@app.route("/rooms/<int:room_id>/image", methods=["POST"])
+@require_owner_key
+def change_image_version(room_id, owner_key):
+    conn = models.get_db()
+    try:
+        room = owned_room_or_403(conn, room_id, owner_key)
+        if room["status"] == "running":
+            return render_template("error.html", message="Stop the room before changing its server version."), 400
+        key = request.form.get("image_version", "")
+        if key not in docker_manager.IMAGE_CHOICES:
+            return render_template("error.html", message="Unknown server version."), 400
+        docker_manager.sync_room_image(room_id, key)
+        models.set_image_version(conn, room_id, key)
+        models.log_event(conn, room_id, "image_changed", detail=key)
     finally:
         conn.close()
     return redirect(url_for("room_detail", room_id=room_id))

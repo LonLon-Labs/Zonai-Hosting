@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-IMAGE = os.environ.get("TOTK_IMAGE", "wesleyhellewell/totk_online_multiplayer_server:latest")
 ROOMS_ROOT = os.environ.get("TOTK_ROOMS_ROOT", "/opt/totk-rooms")
 CONTAINER_PORT = 10014  # fixed port the server listens on inside the container
 
@@ -49,6 +48,88 @@ def client():
 
 def container_name(room_id):
     return f"totk-server-{room_id}"
+
+
+# Server versions a room can run. Keys are what's stored in the database,
+# labels are what the website shows, and values are the Docker image tags.
+IMAGE_CHOICES = {
+    "0.0.2": "wesleyhellewell/totk_online_multiplayer_server:0.0.2",
+    "0.0.1": "wesleyhellewell/totk_online_multiplayer_server:0.0.1",
+    "0.0.1-deprecated": "wesleyhellewell/totk_online_multiplayer_server:latest",
+}
+IMAGE_LABELS = {
+    "0.0.2": "V0.0.2",
+    "0.0.1": "V0.0.1",
+    "0.0.1-deprecated": "V0.0.1 (Test)",
+}
+IMAGE_ORDER = ["0.0.1", "0.0.1-deprecated", "0.0.2"]
+DEFAULT_IMAGE_KEY = "0.0.2"
+# Rooms created before version selection existed ran the :latest tag, so
+# that's what a room with no recorded version is treated as.
+LEGACY_IMAGE_KEY = "0.0.1-deprecated"
+# Hidden file in each room's data directory recording which version the
+# room's program files were last synced to.
+IMAGE_MARKER = ".totk-image-version"
+
+
+def image_for_key(key):
+    if key not in IMAGE_CHOICES:
+        raise ValueError(f"Unknown server version: {key!r}")
+    return IMAGE_CHOICES[key]
+
+
+def _read_image_marker(room_id):
+    try:
+        with open(os.path.join(room_dir(room_id), IMAGE_MARKER), "r", encoding="utf-8") as f:
+            key = f.read().strip()
+    except FileNotFoundError:
+        return None
+    return key if key in IMAGE_CHOICES else None
+
+
+def _write_image_marker(room_id, key):
+    with open(os.path.join(room_dir(room_id), IMAGE_MARKER), "w", encoding="utf-8") as f:
+        f.write(key + "\n")
+
+
+def room_image(room_id):
+    """The image this room's container and helper containers run from:
+    whichever version the room was last synced to."""
+    key = _read_image_marker(room_id) or LEGACY_IMAGE_KEY
+    return IMAGE_CHOICES[key]
+
+
+def install_room_code(room_id, key):
+    """Replace the game-server program in this room's data directory
+    (server.jar, start.bat, Plugins/, PythonAPI/) with the copy from the
+    requested version's image. User/, Romfs/, Resources/, PuppetPacks/ and
+    the ban lists are left alone, so saves and settings carry over."""
+    script = """set -e
+cp -f /app/seed/server.jar /data/server.jar
+cp -f /app/seed/start.bat /data/start.bat
+mkdir -p /data/Plugins /data/PythonAPI
+cp -a /app/seed/Plugins/. /data/Plugins/
+cp -a /app/seed/PythonAPI/. /data/PythonAPI/
+chmod -R a+rwX /data/server.jar /data/start.bat /data/Plugins /data/PythonAPI
+"""
+    _run_privileged(room_id, script, image=image_for_key(key))
+
+
+def sync_room_image(room_id, key):
+    """Make this room's program files match the requested server version.
+
+    docker-entrypoint.sh only seeds the image's server.jar when the room has
+    none, so a room that has already run needs its program files replaced
+    here when its version changes. Only the program files are touched, so
+    the room's data carries over in both directions (upgrade or downgrade)."""
+    image_for_key(key)  # validates the key
+    with room_lock(room_id):
+        ensure_room_dir(room_id)
+        has_program = os.path.isfile(os.path.join(room_dir(room_id), "server.jar"))
+        installed = _read_image_marker(room_id) or (LEGACY_IMAGE_KEY if has_program else None)
+        if has_program and installed != key:
+            install_room_code(room_id, key)
+        _write_image_marker(room_id, key)
 
 
 def room_dir(room_id):
@@ -90,8 +171,9 @@ def create_and_start(room_id, port):
             volumes={data_dir: {"bind": "/app/run", "mode": "rw"}},
             restart_policy={"Name": "no"},
         )
+        image = room_image(room_id)
         try:
-            container = client().containers.run(IMAGE, **run_kwargs)
+            container = client().containers.run(image, **run_kwargs)
         except APIError as e:
             if e.response is not None and e.response.status_code == 409:
                 # A container is still sitting on this name despite the
@@ -104,7 +186,7 @@ def create_and_start(room_id, port):
                         stale.remove(force=True)
                     except NotFound:
                         pass
-                container = client().containers.run(IMAGE, **run_kwargs)
+                container = client().containers.run(image, **run_kwargs)
             else:
                 raise
         return container
@@ -149,13 +231,13 @@ def restart(room_id):
         container.restart(timeout=15)
 
 
-def pull_latest_image():
+def pull_latest_image(room_id):
     """Pull the latest version of the configured server image from its
     registry. `containers.run()` only pulls automatically when the image
     is completely absent locally, so a plain restart/start keeps using
     whatever build is already cached -- this is what actually fetches a
     newly published image."""
-    client().api.pull(IMAGE)
+    client().api.pull(room_image(room_id))
 
 
 def recreate_container(room_id, port):
@@ -166,17 +248,33 @@ def recreate_container(room_id, port):
     already-running room. This *will* disconnect anyone currently
     connected, since the running container is replaced."""
     with room_lock(room_id):
-        pull_latest_image()
+        pull_latest_image(room_id)
         return create_and_start(room_id, port)
 
 
 def delete_room_data(room_id):
     """Fully remove a room's container and its on-disk data. Called when
-    a room is deleted, not on an ordinary stop/expiry."""
+    a room is deleted, not on an ordinary stop/expiry.
+
+    A room's data directory is littered with root-owned files and folders
+    -- written by the game server running as root inside the container,
+    or seeded there by docker-entrypoint.sh, also running as root -- so a
+    plain host-side shutil.rmtree() can't actually remove most of it.
+    This used to call shutil.rmtree(d, ignore_errors=True), which means
+    every one of those PermissionErrors was silently swallowed rather
+    than raised: the call appeared to succeed while leaving the room's
+    folder (or most of it) behind on disk, with nothing logged to even
+    hint why. Wiping the contents now runs inside a short-lived
+    privileged container instead, same pattern as everything else here
+    that touches root-owned data -- then the now-empty top-level
+    directory (created by this app itself, so it IS host-user-owned) is
+    removed normally, and any real failure is allowed to raise rather
+    than being hidden."""
     with room_lock(room_id):
         stop_and_remove(room_id)
         d = room_dir(room_id)
         if os.path.isdir(d):
+            _run_privileged(room_id, "rm -rf /data/* /data/.[!.]* /data/..?* 2>/dev/null; true")
             shutil.rmtree(d, ignore_errors=True)
 
 
@@ -226,13 +324,14 @@ def send_console_command(room_id, command_text):
             pass
 
 
-def _run_privileged(room_id, script, extra_mounts=None):
+def _run_privileged(room_id, script, extra_mounts=None, image=None):
     data_dir = ensure_room_dir(room_id)
+    image = image or room_image(room_id)
     volumes = {data_dir: {'bind': '/data', 'mode': 'rw'}}
     if extra_mounts:
         volumes.update(extra_mounts)
     client().containers.run(
-        IMAGE,
+        image,
         entrypoint=['/bin/sh', '-c'],
         command=[script],
         volumes=volumes,
@@ -320,7 +419,16 @@ def replace_player_save(room_id, uid, content_bytes):
     atomically renames it over the destination -- that only needs write
     access to the directory itself, never to the file it replaces."""
     save_dir = os.path.join(room_dir(room_id), "User", "SaveServer", "users")
-    os.makedirs(save_dir, exist_ok=True)
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+    except PermissionError:
+        # users/ doesn't exist yet, and its parent (User/SaveServer/) is
+        # root-owned -- same "can't mkdir under a root-owned parent"
+        # situation replace_romfs's docstring describes, just for a
+        # directory here instead of a file. Fix permissions the usual way
+        # and retry once.
+        _run_privileged(room_id, "chmod -R a+rwX /data/User 2>/dev/null || true")
+        os.makedirs(save_dir, exist_ok=True)
     dest = os.path.join(save_dir, f"{uid}.ktml")
     try:
         fd, tmp_path = tempfile.mkstemp(dir=save_dir, prefix=".player-upload-", suffix=".tmp")
