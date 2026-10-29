@@ -52,26 +52,49 @@ BOOL64_KEY_NAME = "unk2749067540"  # the one key TOTKSaveData ever uses for this
 _NAME2HASH_LINE_RE = re.compile(r'^"((?:\\.|[^"\\])*)"\s*:\s*(-?\d+)\s*$')
 _UNK_NAME_RE = re.compile(r'^unk(-?\d+)$')
 
-# name2hash.ktml lives with the rest of the server's Resources, a sibling
-# of this Website/ directory -- read directly from there rather than
-# keeping a separate copy that could drift out of sync with the image.
-_RESOURCES_SAVE_SERVER_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "Docker Server", "Resources", "SaveServer"
-)
+# The server's SaveServer resources (name2hash.ktml, defaultClientSave.ktml)
+# are read directly from a Docker Server folder beside Website/ rather than
+# keeping a second copy that could drift out of sync with the image. The
+# folder name varies between installs, so look in each known name, with an
+# explicit override via TOTK_SAVE_RESOURCES_DIR.
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_IMAGE_RESOURCE_FOLDERS = ("Docker Server V0.0.2", "Docker Server", "Docker Server V0.0.1 Test")
 
-_name_to_hash_cache = None
+_name_to_hash_cache = {}
+
+
+def find_image_resources_dir():
+    """Folder containing the server's SaveServer resources: the
+    TOTK_SAVE_RESOURCES_DIR env var if set, otherwise the first known
+    Docker Server folder beside Website/ that actually has name2hash.ktml."""
+    env = os.environ.get("TOTK_SAVE_RESOURCES_DIR")
+    candidates = [env] if env else []
+    candidates += [
+        os.path.join(_BASE_DIR, "..", folder, "Resources", "SaveServer")
+        for folder in _IMAGE_RESOURCE_FOLDERS
+    ]
+    for candidate in candidates:
+        if os.path.isfile(os.path.join(candidate, "name2hash.ktml")):
+            return candidate
+    raise ConversionError(
+        "Couldn't find the server's name2hash.ktml. Looked in: "
+        + ", ".join(os.path.normpath(c) for c in candidates)
+        + ". Set TOTK_SAVE_RESOURCES_DIR to the folder that contains it."
+    )
 
 
 class ConversionError(Exception):
     """A KTML save couldn't be converted to progress.sav."""
 
 
-def _load_name_to_hash():
-    global _name_to_hash_cache
-    if _name_to_hash_cache is not None:
-        return _name_to_hash_cache
+def _load_name_to_hash(resources_dir=None):
+    if resources_dir and os.path.isfile(os.path.join(resources_dir, "name2hash.ktml")):
+        path = os.path.join(resources_dir, "name2hash.ktml")
+    else:
+        path = os.path.join(find_image_resources_dir(), "name2hash.ktml")
+    if path in _name_to_hash_cache:
+        return _name_to_hash_cache[path]
 
-    path = os.path.join(_RESOURCES_SAVE_SERVER_DIR, "name2hash.ktml")
     table = {}
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -92,7 +115,7 @@ def _load_name_to_hash():
             f"Could not read the server's name2hash.ktml at {path}: {e}"
         ) from e
 
-    _name_to_hash_cache = table
+    _name_to_hash_cache[path] = table
     return table
 
 
@@ -412,12 +435,14 @@ def export_progress_sav(base_maps, overlay_maps, name_to_hash):
     return buf.bytes()[:FILE_SIZE]
 
 
-def ktml_to_progress_sav(base_ktml_text, overlay_ktml_text=None):
+def ktml_to_progress_sav(base_ktml_text, overlay_ktml_text=None, resources_dir=None):
     """Convert save.ktml text (base_ktml_text) -- optionally merged with
     a specific player's users/<uid>.ktml text (overlay_ktml_text) the
     same way the real server merges them when generating that player's
-    actual save -- into progress.sav bytes."""
-    name_to_hash = _load_name_to_hash()
+    actual save -- into progress.sav bytes. resources_dir is the folder
+    holding name2hash.ktml; pass the room's own Resources/SaveServer so
+    the table matches the version the room is actually running."""
+    name_to_hash = _load_name_to_hash(resources_dir)
 
     try:
         base_maps = parse_ktml(base_ktml_text)

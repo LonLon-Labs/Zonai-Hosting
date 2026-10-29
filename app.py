@@ -602,8 +602,12 @@ def download_main_save(room_id, owner_key):
     if request.args.get("format") == "sav":
         with open(path, "r", encoding="utf-8", errors="strict") as f:
             server_ktml_text = f.read()
+        docker_manager.fix_resources_permissions(room_id)
         try:
-            sav_bytes = save_converter.ktml_to_progress_sav(server_ktml_text)
+            sav_bytes = save_converter.ktml_to_progress_sav(
+                server_ktml_text,
+                resources_dir=docker_manager.room_save_resources_dir(room_id),
+            )
         except save_converter.ConversionError as e:
             return render_template("error.html", message=f"Couldn't convert this save to .sav: {e}", sound="error"), 400
         return send_file(

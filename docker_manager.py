@@ -55,7 +55,7 @@ def container_name(room_id):
 IMAGE_CHOICES = {
     "0.0.2": "wesleyhellewell/totk_online_multiplayer_server:0.0.2",
     "0.0.1": "wesleyhellewell/totk_online_multiplayer_server:0.0.1",
-    "0.0.1-deprecated": "wesleyhellewell/totk_online_multiplayer_server:latest",
+    "0.0.1-deprecated": "wesleyhellewell/totk_online_multiplayer_server_test:latest",
 }
 IMAGE_LABELS = {
     "0.0.2": "V0.0.2",
@@ -88,8 +88,20 @@ def _read_image_marker(room_id):
 
 
 def _write_image_marker(room_id, key):
-    with open(os.path.join(room_dir(room_id), IMAGE_MARKER), "w", encoding="utf-8") as f:
-        f.write(key + "\n")
+    path = os.path.join(room_dir(room_id), IMAGE_MARKER)
+
+    def _write():
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(key + "\n")
+
+    try:
+        _write()
+    except PermissionError:
+        # The room folder (or an old marker inside it) can end up root-owned,
+        # e.g. if a container touched it first. Open the folder up and drop
+        # any stale marker the same way the other helpers do, then retry once.
+        _run_privileged(room_id, f"chmod a+rwx /data && rm -f /data/{IMAGE_MARKER}")
+        _write()
 
 
 def room_image(room_id):
@@ -502,14 +514,19 @@ def player_save_path(room_id, uid):
 # the PVP puppet packs), so room owners can customize it for their own
 # room without affecting anyone else's.
 
+def room_save_resources_dir(room_id):
+    """This room's own Resources/SaveServer folder (name2hash.ktml etc.),
+    seeded from the image on first start -- the exact version the room runs."""
+    return os.path.join(room_dir(room_id), "Resources", "SaveServer")
+
+
 def default_client_save_path(room_id):
     return os.path.join(room_dir(room_id), "Resources", "SaveServer", "defaultClientSave.ktml")
 
 
 def _image_default_client_save_path():
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "Docker Server", "Resources", "SaveServer", "defaultClientSave.ktml"
-    )
+    import save_converter
+    return os.path.join(save_converter.find_image_resources_dir(), "defaultClientSave.ktml")
 
 
 def fix_resources_permissions(room_id):
